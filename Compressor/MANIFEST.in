@@ -1,0 +1,25 @@
+# Include important files
+include README.md
+include LICENSE
+include requirements.txt
+include pyproject.toml
+
+# Include all package data
+recursive-include dimensio *.py
+recursive-include dimensio *.json
+
+# Exclude unnecessary files
+global-exclude __pycache__
+global-exclude *.py[co]
+global-exclude .DS_Store
+global-exclude *.so
+global-exclude *.dylib
+
+# Exclude test and development files
+prune tests
+prune docs
+prune examples
+exclude .gitignore
+exclude .coveragerc
+exclude pytest.ini
+

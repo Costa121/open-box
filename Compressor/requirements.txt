@@ -1,0 +1,14 @@
+# Core dependencies
+numpy>=1.19.0
+pandas>=1.2.0
+scikit-learn>=0.24.0
+ConfigSpace>=0.6.0
+shap>=0.41.0
+
+# Visualization dependencies
+seaborn>=0.11.0
+matplotlib>=3.3.0
+
+# OpenBox dependency (for History and space utilities)
+openbox>=0.8.0
+
