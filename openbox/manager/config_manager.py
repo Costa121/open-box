@@ -6,6 +6,12 @@ from typing import Callable, Dict, Any, Optional, List
 
 
 class ConfigManager:
+    """Manage task configuration for TaskManager-based workflows.
+
+    This manager is optional: legacy optimizers can bypass it and provide
+    configuration directly in code (e.g., passing config_space/objective
+    into optimizer constructors).
+    """
     @staticmethod
     def parse_args():
         parser = argparse.ArgumentParser()
@@ -67,17 +73,15 @@ class ConfigManager:
     @classmethod
     def from_dict(cls, config_dict: Dict[str, Any], args=None) -> "ConfigManager":
         return cls(config_dict=config_dict, args=args)
-    
-    
-    def _load_config(self, config_dict=None,
-                     loader: Optional[Callable[[str], Dict[str, Any]]] = None) -> Dict[str, Any]:
-        if config_dict is not None:
-            return deepcopy(config_dict)
 
-        if not self.config_file:
+    @staticmethod
+    def load_config_file(config_file: str,
+                         root_dir: Optional[str] = None,
+                         loader: Optional[Callable[[str], Dict[str, Any]]] = None) -> Dict[str, Any]:
+        if not config_file:
             raise ValueError("ConfigManager requires config_file or config_dict.")
-
-        config_path = os.path.join(self.root_dir, self.config_file)
+        resolved_root = root_dir or os.path.dirname(os.path.dirname(__file__))
+        config_path = os.path.join(resolved_root, config_file)
         if loader is None:
             with open(config_path, 'r', encoding='utf-8') as f:
                 config = yaml.safe_load(f)
@@ -87,24 +91,36 @@ class ConfigManager:
         if 'includes' in config:
             includes = config.pop('includes')
             merged_config = {}
-            
             for include_file in includes:
-                include_path = os.path.join(self.root_dir, include_file)
+                include_path = os.path.join(resolved_root, include_file)
                 if os.path.exists(include_path):
                     with open(include_path, 'r', encoding='utf-8') as f:
                         included_config = yaml.safe_load(f)
-                        merged_config = self._merge_dict(merged_config, included_config)
-            merged_config = self._merge_dict(merged_config, config)
+                        merged_config = ConfigManager._merge_dict(merged_config, included_config)
+            merged_config = ConfigManager._merge_dict(merged_config, config)
             return merged_config
-        
+
         return config
     
-    def _merge_dict(self, base: Dict, override: Dict) -> Dict:
+    
+    def _load_config(self, config_dict=None,
+                     loader: Optional[Callable[[str], Dict[str, Any]]] = None) -> Dict[str, Any]:
+        if config_dict is not None:
+            return deepcopy(config_dict)
+
+        return self.load_config_file(
+            self.config_file,
+            root_dir=self.root_dir,
+            loader=loader
+        )
+    
+    @staticmethod
+    def _merge_dict(base: Dict, override: Dict) -> Dict:
         result = base.copy()
         for key, value in override.items():
             if key in result and isinstance(result[key], dict) and isinstance(value, dict):
                 # recursively merge dictionaries
-                result[key] = self._merge_dict(result[key], value)
+                result[key] = ConfigManager._merge_dict(result[key], value)
             else:
                 result[key] = value
         return result
