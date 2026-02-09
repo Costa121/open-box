@@ -101,6 +101,36 @@ class ConfigManager:
             return merged_config
 
         return config
+
+    @staticmethod
+    def merge_config(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+        return ConfigManager._merge_dict(base, override)
+
+    @staticmethod
+    def set_config_value(config: Dict[str, Any], key: str, value: Any) -> None:
+        config_path = key.split('.')
+        current = config
+        for path_key in config_path[:-1]:
+            if path_key not in current:
+                current[path_key] = {}
+            current = current[path_key]
+        current[config_path[-1]] = value
+
+    @staticmethod
+    def apply_args_overrides(config: Dict[str, Any], args) -> Dict[str, Any]:
+        if args is None:
+            return config
+        SKIP_ARGS = {'config', 'opt', 'task', 'log_level', 'iter_num', 'warm_start',
+                    'transfer', 'backup_flag', 'test_mode', 'debug', 'resume', 'use_cached_model'}
+        for arg_name, arg_value in vars(args).items():
+            if arg_name in SKIP_ARGS:
+                continue
+            if not ConfigManager._should_override(arg_value):
+                continue
+            config_path = ConfigManager._find_config_path_static(config, arg_name)
+            if config_path:
+                ConfigManager.set_config_value(config, '.'.join(config_path), arg_value)
+        return config
     
     
     def _load_config(self, config_dict=None,
@@ -141,6 +171,10 @@ class ConfigManager:
         
     
     def _find_config_path(self, key: str) -> Optional[List[str]]:
+        return self._find_config_path_static(self.config, key)
+
+    @staticmethod
+    def _find_config_path_static(config: Dict[str, Any], key: str) -> Optional[List[str]]:
         PARAM_MAPPINGS = {
             'ws_init_num': ['method_args', 'ws_args', 'init_num'],
             'ws_topk': ['method_args', 'ws_args', 'topk'],
@@ -152,7 +186,7 @@ class ConfigManager:
         
         if key in PARAM_MAPPINGS:
             path = PARAM_MAPPINGS[key]
-            current = self.config
+            current = config
             for k in path:
                 if isinstance(current, dict) and k in current:
                     current = current[k]
@@ -169,9 +203,10 @@ class ConfigManager:
                     if result:
                         return result
             return None
-        return search_recursive(self.config, [])
+        return search_recursive(config, [])
     
-    def _should_override(self, value: Any) -> bool:
+    @staticmethod
+    def _should_override(value: Any) -> bool:
         if value is None:
             return False
         if isinstance(value, bool):
