@@ -59,16 +59,20 @@ class Observation(object):
 
     __repr__ = __str__
 
-    def to_dict(self):
+    def to_dict(self, include_optional: bool = True):
         data = {
             'config': self.config.get_dictionary(),
             'objectives': self.objectives,
-            'constraints': self.constraints,
             'trial_state': self.trial_state,
-            'elapsed_time': self.elapsed_time,
-            'create_time': self.create_time.isoformat(),
-            'extra_info': self.extra_info,
         }
+        if include_optional or self.constraints is not None:
+            data['constraints'] = self.constraints
+        if include_optional or self.elapsed_time is not None:
+            data['elapsed_time'] = self.elapsed_time
+        if include_optional or self.create_time is not None:
+            data['create_time'] = self.create_time.isoformat()
+        if include_optional or self.extra_info:
+            data['extra_info'] = self.extra_info
         data = copy.deepcopy(data)
         return data
 
@@ -87,7 +91,7 @@ class Observation(object):
 
         if isinstance(create_time, str):
             observation.create_time = datetime.fromisoformat(create_time)
-        else:
+        elif create_time is not None:
             logger.warning(f'Unable to parse create_time ({create_time}) from dict.')
         return observation
 
@@ -1062,7 +1066,7 @@ class History(object):
         exp = visualize_hiplot(configs=configs, y=y, cy=cy, html_file=html_file, **kwargs)
         return exp
 
-    def save_json(self, filename: str):
+    def save_json(self, filename: str, compact: bool = True):
         dirname = os.path.dirname(filename)
         if dirname != '' and not os.path.exists(dirname):
             logger.info(f'Creating directory to save history: {dirname}')
@@ -1073,14 +1077,17 @@ class History(object):
             'task_id': self.task_id,
             'num_objectives': self.num_objectives,
             'num_constraints': self.num_constraints,
-            # 'config_space': self.config_space,
-            'ref_point': self.ref_point,
-            'meta_info': self.meta_info,
-            'global_start_time': self.global_start_time.isoformat(),
             'observations': [
-                obs.to_dict() for obs in self.observations
+                obs.to_dict(include_optional=not compact) for obs in self.observations
             ]
         }
+        if not compact or self.ref_point is not None:
+            data['ref_point'] = self.ref_point
+        if not compact or self.meta_info:
+            data['meta_info'] = self.meta_info
+        if not compact or self.global_start_time is not None:
+            data['global_start_time'] = self.global_start_time.isoformat()
+
         with open(filename, 'w') as f:
             json.dump(data, f, indent=2)
         logger.info(f'Saved history (len={len(self)}) to {filename}')
@@ -1093,13 +1100,18 @@ class History(object):
             data = json.load(f)
 
         # todo: load rng, config space with random state from json
-        global_start_time = data.pop('global_start_time')
-        global_start_time = datetime.fromisoformat(global_start_time)
-        observations = data.pop('observations')
+        global_start_time = data.pop('global_start_time', None)
+        if global_start_time is not None:
+            global_start_time = datetime.fromisoformat(global_start_time)
+        observations = data.pop('observations', [])
         observations = [Observation.from_dict(obs, config_space) for obs in observations]
 
+        data.setdefault('meta_info', {})
+        data.setdefault('ref_point', None)
+
         history = cls(**data)
-        history.global_start_time = global_start_time
+        if global_start_time is not None:
+            history.global_start_time = global_start_time
         history.update_observations(observations)
 
         logger.info(f'Loaded history (len={len(observations)}) from {filename}')
