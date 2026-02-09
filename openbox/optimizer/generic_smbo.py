@@ -301,6 +301,14 @@ class SMBO(BOBase):
             trial_state=trial_state, elapsed_time=elapsed_time, extra_info=extra_info,
         )
         self.config_advisor.update_observation(observation)
+        self._sync_task_manager_history(
+            config=config,
+            objectives=objectives,
+            timeout_status=timeout_status,
+            traceback_msg=traceback_msg,
+            elapsed_time=elapsed_time,
+            extra_info=extra_info,
+        )
 
         self.iteration_id += 1
         # Logging
