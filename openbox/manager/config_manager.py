@@ -1,7 +1,8 @@
 import os
 import argparse
 import yaml
-from typing import Dict, Any, Optional, List
+from copy import deepcopy
+from typing import Callable, Dict, Any, Optional, List
 
 
 class ConfigManager:
@@ -51,19 +52,37 @@ class ConfigManager:
         
         return parser.parse_args()
 
-    def __init__(self, config_file='configs/base.yaml', args=None):
+    def __init__(self, config_file='configs/base.yaml', args=None, config_dict=None,
+                 config_override: Optional[Dict[str, Any]] = None,
+                 loader: Optional[Callable[[str], Dict[str, Any]]] = None):
         self.config_file = config_file
         self.root_dir = os.path.dirname(os.path.dirname(__file__))
-        self.config = self._load_config()
+        self.config = self._load_config(config_dict=config_dict, loader=loader)
+        if config_override:
+            self.config = self._merge_dict(self.config, config_override)
         self.method_id = args.opt if args else None
         self.args = args  # Store args for later access
         self._apply_args_overrides(args)
+
+    @classmethod
+    def from_dict(cls, config_dict: Dict[str, Any], args=None) -> "ConfigManager":
+        return cls(config_dict=config_dict, args=args)
     
     
-    def _load_config(self) -> Dict[str, Any]:
+    def _load_config(self, config_dict=None,
+                     loader: Optional[Callable[[str], Dict[str, Any]]] = None) -> Dict[str, Any]:
+        if config_dict is not None:
+            return deepcopy(config_dict)
+
+        if not self.config_file:
+            raise ValueError("ConfigManager requires config_file or config_dict.")
+
         config_path = os.path.join(self.root_dir, self.config_file)
-        with open(config_path, 'r', encoding='utf-8') as f:
-            config = yaml.safe_load(f)
+        if loader is None:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config = yaml.safe_load(f)
+        else:
+            config = loader(config_path)
 
         if 'includes' in config:
             includes = config.pop('includes')
@@ -151,6 +170,13 @@ class ConfigManager:
                 current[key] = {}
             current = current[key]
         current[config_path[-1]] = value
+
+    def update_config(self, override: Dict[str, Any]) -> None:
+        self.config = self._merge_dict(self.config, override)
+
+    def set(self, key: str, value: Any) -> None:
+        config_path = key.split('.')
+        self._set_nested_config(config_path, value)
     
     
     @property

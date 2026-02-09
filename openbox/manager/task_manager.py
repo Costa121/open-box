@@ -26,6 +26,7 @@ class TaskManager:
                 config_manager: ConfigManager,
                 logger_kwargs,
                 target_system: Optional[TargetSystem] = None,
+                component_registry: Optional[ComponentRegistry] = None,
                 **kwargs):
         if hasattr(self, "_initialized") and self._initialized:
             return
@@ -49,7 +50,7 @@ class TaskManager:
             current_database=config_manager.database
         )
         
-        self.component_registry = ComponentRegistry()
+        self.component_registry = component_registry or ComponentRegistry()
         
         self._setup_listeners()
         
