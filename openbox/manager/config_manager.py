@@ -1,10 +1,17 @@
 import os
 import argparse
 import yaml
-from typing import Dict, Any, Optional, List
+from copy import deepcopy
+from typing import Callable, Dict, Any, Optional, List
 
 
 class ConfigManager:
+    """Manage task configuration for TaskManager-based workflows.
+
+    This manager is optional: legacy optimizers can bypass it and provide
+    configuration directly in code (e.g., passing config_space/objective
+    into optimizer constructors).
+    """
     @staticmethod
     def parse_args():
         parser = argparse.ArgumentParser()
@@ -51,41 +58,99 @@ class ConfigManager:
         
         return parser.parse_args()
 
-    def __init__(self, config_file='configs/base.yaml', args=None):
+    def __init__(self, config_file='configs/base.yaml', args=None, config_dict=None,
+                 config_override: Optional[Dict[str, Any]] = None,
+                 loader: Optional[Callable[[str], Dict[str, Any]]] = None):
         self.config_file = config_file
         self.root_dir = os.path.dirname(os.path.dirname(__file__))
-        self.config = self._load_config()
+        self.config = self._load_config(config_dict=config_dict, loader=loader)
+        if config_override:
+            self.config = self._merge_dict(self.config, config_override)
         self.method_id = args.opt if args else None
         self.args = args  # Store args for later access
         self._apply_args_overrides(args)
-    
-    
-    def _load_config(self) -> Dict[str, Any]:
-        config_path = os.path.join(self.root_dir, self.config_file)
-        with open(config_path, 'r', encoding='utf-8') as f:
-            config = yaml.safe_load(f)
+
+    @classmethod
+    def from_dict(cls, config_dict: Dict[str, Any], args=None) -> "ConfigManager":
+        return cls(config_dict=config_dict, args=args)
+
+    @staticmethod
+    def load_config_file(config_file: str,
+                         root_dir: Optional[str] = None,
+                         loader: Optional[Callable[[str], Dict[str, Any]]] = None) -> Dict[str, Any]:
+        if not config_file:
+            raise ValueError("ConfigManager requires config_file or config_dict.")
+        resolved_root = root_dir or os.path.dirname(os.path.dirname(__file__))
+        config_path = os.path.join(resolved_root, config_file)
+        if loader is None:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config = yaml.safe_load(f)
+        else:
+            config = loader(config_path)
 
         if 'includes' in config:
             includes = config.pop('includes')
             merged_config = {}
-            
             for include_file in includes:
-                include_path = os.path.join(self.root_dir, include_file)
+                include_path = os.path.join(resolved_root, include_file)
                 if os.path.exists(include_path):
                     with open(include_path, 'r', encoding='utf-8') as f:
                         included_config = yaml.safe_load(f)
-                        merged_config = self._merge_dict(merged_config, included_config)
-            merged_config = self._merge_dict(merged_config, config)
+                        merged_config = ConfigManager._merge_dict(merged_config, included_config)
+            merged_config = ConfigManager._merge_dict(merged_config, config)
             return merged_config
-        
+
+        return config
+
+    @staticmethod
+    def merge_config(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+        return ConfigManager._merge_dict(base, override)
+
+    @staticmethod
+    def set_config_value(config: Dict[str, Any], key: str, value: Any) -> None:
+        config_path = key.split('.')
+        current = config
+        for path_key in config_path[:-1]:
+            if path_key not in current:
+                current[path_key] = {}
+            current = current[path_key]
+        current[config_path[-1]] = value
+
+    @staticmethod
+    def apply_args_overrides(config: Dict[str, Any], args) -> Dict[str, Any]:
+        if args is None:
+            return config
+        SKIP_ARGS = {'config', 'opt', 'task', 'log_level', 'iter_num', 'warm_start',
+                    'transfer', 'backup_flag', 'test_mode', 'debug', 'resume', 'use_cached_model'}
+        for arg_name, arg_value in vars(args).items():
+            if arg_name in SKIP_ARGS:
+                continue
+            if not ConfigManager._should_override(arg_value):
+                continue
+            config_path = ConfigManager._find_config_path_static(config, arg_name)
+            if config_path:
+                ConfigManager.set_config_value(config, '.'.join(config_path), arg_value)
         return config
     
-    def _merge_dict(self, base: Dict, override: Dict) -> Dict:
+    
+    def _load_config(self, config_dict=None,
+                     loader: Optional[Callable[[str], Dict[str, Any]]] = None) -> Dict[str, Any]:
+        if config_dict is not None:
+            return deepcopy(config_dict)
+
+        return self.load_config_file(
+            self.config_file,
+            root_dir=self.root_dir,
+            loader=loader
+        )
+    
+    @staticmethod
+    def _merge_dict(base: Dict, override: Dict) -> Dict:
         result = base.copy()
         for key, value in override.items():
             if key in result and isinstance(result[key], dict) and isinstance(value, dict):
                 # recursively merge dictionaries
-                result[key] = self._merge_dict(result[key], value)
+                result[key] = ConfigManager._merge_dict(result[key], value)
             else:
                 result[key] = value
         return result
@@ -106,6 +171,10 @@ class ConfigManager:
         
     
     def _find_config_path(self, key: str) -> Optional[List[str]]:
+        return self._find_config_path_static(self.config, key)
+
+    @staticmethod
+    def _find_config_path_static(config: Dict[str, Any], key: str) -> Optional[List[str]]:
         PARAM_MAPPINGS = {
             'ws_init_num': ['method_args', 'ws_args', 'init_num'],
             'ws_topk': ['method_args', 'ws_args', 'topk'],
@@ -117,7 +186,7 @@ class ConfigManager:
         
         if key in PARAM_MAPPINGS:
             path = PARAM_MAPPINGS[key]
-            current = self.config
+            current = config
             for k in path:
                 if isinstance(current, dict) and k in current:
                     current = current[k]
@@ -134,9 +203,10 @@ class ConfigManager:
                     if result:
                         return result
             return None
-        return search_recursive(self.config, [])
+        return search_recursive(config, [])
     
-    def _should_override(self, value: Any) -> bool:
+    @staticmethod
+    def _should_override(value: Any) -> bool:
         if value is None:
             return False
         if isinstance(value, bool):
@@ -151,6 +221,13 @@ class ConfigManager:
                 current[key] = {}
             current = current[key]
         current[config_path[-1]] = value
+
+    def update_config(self, override: Dict[str, Any]) -> None:
+        self.config = self._merge_dict(self.config, override)
+
+    def set(self, key: str, value: Any) -> None:
+        config_path = key.split('.')
+        self._set_nested_config(config_path, value)
     
     
     @property

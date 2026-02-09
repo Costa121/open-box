@@ -68,6 +68,7 @@ results/*
 docs/
 mock/*
 test*.py
+!test/optimizer/test_task_manager_sync.py
 
 *.json
 *.png
